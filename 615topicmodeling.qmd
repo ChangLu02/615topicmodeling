@@ -1,0 +1,91 @@
+---
+title: "Movie Plots Topic Modeling Analysis"
+author: "Chang Lu"
+format:
+  pdf:
+    toc: true
+    toc-depth: 2
+---
+
+```{r, include=FALSE}
+library(tidyverse)
+library(tidytext)
+library(topicmodels)
+library(ldatuning)
+library(wordcloud)
+library(tm)
+library(ggplot2)
+library(LDAvis)
+```
+
+```{r}
+# Load data
+movie_plots <- read.csv("movie_plots_with_genres.csv")
+names(movie_plots)
+```
+
+```{r}
+# Data preprocessing
+movie_plots_clean <- movie_plots %>%
+  rename(Movie = Movie.Name) %>%  # Rename column for simplicity
+  unnest_tokens(word, Plot) %>%
+  anti_join(stop_words, by = "word") %>%  # Ensure correct join
+  filter(!is.na(word)) %>%  # Remove any NA words
+  count(Movie, word, sort = TRUE) %>%
+  cast_dtm(Movie, word, n)
+```
+
+```{r}
+# Determine the optimal number of topics using ldatuning
+result <- FindTopicsNumber(
+  movie_plots_clean,
+  topics = seq(2, 20, by = 1),
+  metrics = c("CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1234),
+  verbose = TRUE
+)
+
+# Plot the result to choose k
+FindTopicsNumber_plot(result)
+```
+
+```{r}
+# Fit the LDA model
+optimal_k <- 5  # Replace with chosen k based on the scree plot
+lda_model <- LDA(movie_plots_clean, k = optimal_k, control = list(seed = 1234))
+
+# Extract topics
+topics <- tidy(lda_model, matrix = "beta")
+
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Visualize topics
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top terms in each topic", x = NULL, y = "Beta")
+```
+
+```{r}
+# Create an artsy word cloud
+wordcloud(top_terms$term, top_terms$beta, max.words = 100, random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+
+# Extract gamma values for each document
+gamma <- tidy(lda_model, matrix = "gamma")
+
+# Visualize document-topic distribution
+gamma %>%
+  ggplot(aes(gamma, fill = factor(topic))) +
+  geom_histogram(show.legend = FALSE, bins = 30) +
+  facet_wrap(~ topic, scales = "free_y") +
+  labs(title = "Document-topic distribution", x = "Gamma", y = "Number of Documents")
+```
