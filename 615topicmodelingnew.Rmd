@@ -1,0 +1,213 @@
+---
+title: "615topicmodelingnew"
+author: "Chang Lu"
+date: "2024-12-09"
+output: pdf_document
+---
+
+---
+title: "Topic Modeling 2"
+format: pdf
+editor: visual
+---
+
+```{r, message=FALSE}
+# Load necessary libraries
+library(tidyverse)
+library(topicmodels)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(wordcloud)
+library(tm)
+library(textrank)
+library(tidytext)
+library(ggforce)
+library(factoextra)
+
+# Load dataset and clean the data
+movies <- read.csv("~/Desktop/615topicmodeling/movie_plots.csv", stringsAsFactors = FALSE)
+movies <- movies %>% filter(!is.na(Plot))  # Remove rows with missing Plot
+```
+
+
+### Creating the Document-type Matrix
+
+```{r}
+# Tokenize words and create document-term matrix
+plot_word_counts <- movies %>%
+  unnest_tokens(word, Plot) %>%
+  count(Movie.Name, word, sort = TRUE) %>%
+  ungroup()
+
+plots_dtm <- plot_word_counts %>%
+  cast_dtm(Movie.Name, word, n)
+
+# Check DTM dimensions
+dim(plots_dtm)
+```
+
+
+### Creating LDA model
+
+```{r}
+# Set up and run LDA model with 30 topics
+set.seed(1234)
+plots_lda <- LDA(plots_dtm, k = 30, control = list(seed = 1234))
+
+# Extract topic-term matrix (beta values)
+topics <- tidy(plots_lda, matrix = "beta")
+
+# Get top terms for each topic
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# View top terms
+head(top_terms)
+```
+
+### Visualize Top Terms by Topic
+
+```{r}
+# Visualization: Top terms for topics with improved layout
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap_paginate(~ topic, scales = "free_y", ncol = 3, nrow = 3, page = 1) + 
+  scale_y_reordered() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.001)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Top Terms in Each Topic",
+    x = "Probability",
+    y = "Term"
+  )
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap_paginate(~ topic, scales = "free_y", ncol = 3, nrow = 3, page = 2) + 
+  scale_y_reordered() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.001)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Top Terms in Each Topic",
+    x = "Probability",
+    y = "Term"
+  )
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap_paginate(~ topic, scales = "free_y", ncol = 3, nrow = 3, page = 3) + 
+  scale_y_reordered() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.001)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Top Terms in Each Topic",
+    x = "Probability",
+    y = "Term"
+  )
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap_paginate(~ topic, scales = "free_y", ncol = 3, nrow = 3, page = 4) + 
+  scale_y_reordered() +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.001)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Top Terms in Each Topic",
+    x = "Probability",
+    y = "Term"
+  )
+```
+
+```{r}
+# Extract the document-topic distribution matrix (gamma values)
+plots_gamma <- tidy(plots_lda, matrix = "gamma")
+
+# Transform the document-topic matrix into a wide format for clustering
+plots_gamma_wider <- plots_gamma %>%
+  pivot_wider(names_from = topic, values_from = gamma)
+
+# Perform K-means clustering on the document-topic distributions
+set.seed(1234)
+plots_gamma_wider_no_na <- plots_gamma_wider %>% drop_na()
+cluster <- kmeans(plots_gamma_wider_no_na %>% select(-document), centers = 8)
+
+# Visualize the clusters using a scatter plot
+library(factoextra)
+fviz_cluster(cluster, data = plots_gamma_wider_no_na %>% select(-document))
+
+# Add the cluster assignments to the original dataset
+plots_gamma_wider$cluster <- cluster$cluster
+
+```
+
+### Achieve each cluster information (e.g. cluster 6, cluster 2).
+
+```{r}
+# Extract the list of movie titles in a specific cluster
+cluster_6_names <- plots_gamma_wider %>%
+  filter(cluster == 6) %>%
+  pull(document)
+
+cluster_2_names <- plots_gamma_wider %>%
+  filter(cluster == 2) %>%
+  pull(document)
+
+# Display the movies
+cluster_6_movies <- movies %>%
+  filter(Movie.Name %in% cluster_6_names)
+
+cluster_2_movies <- movies %>%
+  filter(Movie.Name %in% cluster_2_names)
+
+print(cluster_6_movies)
+print(cluster_2_movies)
+```
+
+### Making word cloud.
+
+```{r}
+# Function to generate a word cloud for each topic
+generate_wordcloud <- function(topic_number, topics_data) {
+  # Filter terms for the specified topic
+  topic_terms <- topics_data %>%
+    filter(topic == topic_number) %>%
+    arrange(desc(beta)) %>%
+    slice_max(beta, n = 30) # Select top 30 words
+  
+  # Generate the word cloud
+  wordcloud(words = topic_terms$term,
+            freq = topic_terms$beta,
+            max.words = 30,
+            random.order = FALSE,
+            colors = brewer.pal(8, "Dark2"),
+            scale = c(4, 0.5))
+}
+
+# Generate word clouds for each topic (Example: first 5 topics)
+par(mfrow = c(2, 3)) # Set up a layout to display multiple word clouds
+for (i in 1:5) {
+  generate_wordcloud(i, topics)
+  title(paste("Topic", i))
+}
+```
+
+
+### What I Have Learned
+
+1. Visualization by topic : Each topic is characterized by its top terms (words with the highest probabilities), which are visualized in bar plots. These help interpret the general themes or subjects of each topic in the data. Also, bar plots and cluster visualizations provide an overview of how topics are distributed and how documents relate to each cluster.
+
+2. Code warning problem: Thanks to Prof.Haviland's in-class code, I can fix the warning problem.
+
+3. Word clouds: Word clouds are generated to visually summarize the top terms in each topic, giving a quick sense of prominent themes.
